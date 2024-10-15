@@ -6,9 +6,11 @@ SAVEDIR = "./saves"
 
 # Where data needs to be copied from
 LOADDIRS = [
-	"~/.steam/steam/steamapps/compatdata/881100/pfx/drive_c/users/steamuser/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Linux Proton
-	"~/.wine/drive_c/$USER/steamuser/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Linux Wine
-	"~/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Windows
+	[ # One of
+		"~/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Windows
+		"~/.steam/steam/steamapps/compatdata/881100/pfx/drive_c/users/steamuser/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Linux Proton
+		"~/.wine/drive_c/$USER/steamuser/AppData/LocalLow/Nolla_Games_Noita/save00", # Noita Linux Wine
+	],
 	"~/Games/NoitaEntangled/save_state", # NoitaEntangled Windows / Linux
 ]
 

@@ -1,6 +1,5 @@
 #!/bin/env python3
 
-import config
 import os
 import time
 import threading
@@ -8,6 +7,8 @@ import datetime
 import shutil
 import sys
 import getpass
+
+import config
 
 # Util stuff
 
@@ -102,11 +103,11 @@ def str2int(s):
 
 def timeago(seconds):
 	intervals = (
-		("year", 31536000),  # 60 * 60 * 24 * 365
-		("month", 2592000),   # 60 * 60 * 24 * 30
-		("week", 604800),     # 60 * 60 * 24 * 7
-		("day", 86400),       # 60 * 60 * 24
-		("hour", 3600),       # 60 * 60
+		("year",   60 * 60 * 24 * 365),
+		("month",  60 * 60 * 24 * 30),
+		("week",   60 * 60 * 24 * 7),
+		("day",    60 * 60 * 24),
+		("hour",   60 * 60),
 		("minute", 60),
 		("second", 1),
 	)
@@ -116,12 +117,27 @@ def timeago(seconds):
 			if value == 1:
 				return "1 %s ago" % name
 			else:
-				return f"%s %ss ago" % (value, name)
+				return "%s %ss ago" % (value, name)
 	return "just now"
+
+def isiterable(obj):
+	return not isinstance(obj, str) and hasattr(obj, "__iter__")
+
+def flattenlist(nestedlist):
+	flattened = []
+	for item in nestedlist:
+		if isiterable(item):
+			flattened.extend(item)
+		else:
+			flattened.append(item)
+	return flattened
 
 # Main
 
+running = True
 def excepthook(exc_type, exc_value, exc_traceback):
+	global running
+	running = False
 	printc(ALTOFF, NEWLINE, CLEAR, end="", flush=True)
 	if issubclass(exc_type, KeyboardInterrupt):
 		return
@@ -161,20 +177,29 @@ def save(log = False):
 		if log: printc(WHITE, "Starting save at ", CYAN, abspath(savedir))
 		os.makedirs(abspath(savedir))
 		with open(abspath(os.path.join(savedir, "paths.txt")), "w") as file:
-			i = 0
-			for loaddir in config.LOADDIRS:
-				loaddirabs = abspath(loaddir)
+			i = -1
+			for loaddirlist in config.LOADDIRS:
+				i += 1
+				if not isiterable(loaddirlist):
+					loaddirlist = [loaddirlist]
+				if len(loaddirlist) == 0:
+					continue
+				for loaddir in loaddirlist:
+					loaddirabs = abspath(loaddir)
+					if os.path.exists(loaddirabs):
+						break
+					loaddir = None
+				if not loaddir:
+					continue
 				savedirpartname = "%s_%s" % (i, os.path.basename(loaddir))
 				savedirpartpath = os.path.join(savedir, savedirpartname)
 				savedirpartabs = abspath(savedirpartpath)
-				i += 1
-				if os.path.exists(loaddirabs):
-					if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, loaddir)
-					file.write("%s\n%s\n\n" % (loaddir, os.path.join(savedirname, savedirpartname)))
-					if os.path.isdir(loaddirabs):
-						shutil.copytree(loaddirabs, savedirpartabs)
-					else:
-						shutil.copy(loaddirabs, savedirpartabs)
+				if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, loaddir)
+				file.write("\n".join((savedirpartname, *loaddirlist)) + "\n\n")
+				if os.path.isdir(loaddirabs):
+					shutil.copytree(loaddirabs, savedirpartabs)
+				else:
+					shutil.copy(loaddirabs, savedirpartabs)
 		if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Finished")
 	finally:
 		lock = False
@@ -188,19 +213,25 @@ def load(path):
 	printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Read ", CYAN, "paths.txt")
 	for file in files:
 		if len(file) < 2: continue
-		savedir = os.path.join(abspath(config.SAVEDIR), file[1])
-		loaddir = abspath(file[0])
-		if os.path.exists(loaddir):
-			if os.path.isdir(loaddir):
-				shutil.rmtree(loaddir)
+		savedir = os.path.join(path, file[0])
+		for loaddir in file[1:]:
+			if len(loaddir) > 0:
+				loaddirabs = abspath(loaddir)
+				if os.path.exists(os.path.dirname(loaddirabs)):
+					break
+			loaddir = None
+		if loaddir == None: continue
+		printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Loading ", CYAN, loaddir)
+		if os.path.exists(loaddirabs):
+			if os.path.isdir(loaddirabs):
+				shutil.rmtree(loaddirabs)
 			else:
-				os.remove(loaddir)
+				os.remove(loaddirabs)
 		if os.path.exists(savedir):
 			if os.path.isdir(savedir):
-				shutil.copytree(savedir, loaddir)
+				shutil.copytree(savedir, loaddirabs)
 			else:
-				shutil.copy(savedir, loaddir)
-		printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Loaded ", CYAN, file[0])
+				shutil.copy(savedir, loaddirabs)
 	printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Finished")
 
 def promptsave(saev):
@@ -226,7 +257,7 @@ def promptsave(saev):
 			savedirname = inputtyped("Enter new name for save (leave blank to cancel)", inputtypedpath(64))
 			if len(savedirname) == 0:
 				continue
-			savedir = "_".join(saev.dir.split("_")[:7]) + "_" + savedirname
+			savedir = "_".join(saev.dir.split("_")[:8]) + "_" + savedirname
 			os.rename(saev.dir, savedir)
 			saev.dir = savedir
 			saev.name = savedirname.replace("_", " ")
@@ -249,7 +280,7 @@ def promptsaves(namedonly):
 		save = Dict(
 			time = str2int(save[:save.index("_")]),
 			dir = savedir,
-			name = " ".join(save.split("_")[7:]) if count > 7 else None,
+			name = " ".join(save.split("_")[8:]) if count > 7 else None,
 		)
 		saves.append(save)
 	if len(saves) == 0:
@@ -317,22 +348,21 @@ printc(
 	ALTON, CLEAR,
 	WHITE, "Config can be found in ", CYAN, "config.py", WHITE, " in the working directory", NEWLINE, NEWLINE,
 	WHITE, "Save Directory:   ", CYAN, config.SAVEDIR, NEWLINE,
-	WHITE, "Load Directories: ", CYAN, "\n                  ".join(config.LOADDIRS), NEWLINE, NEWLINE,
+	WHITE, "Load Directories: ", CYAN, "\n                  ".join(flattenlist(config.LOADDIRS)), NEWLINE, NEWLINE,
 	WHITE, "Save Interval:    ", CYAN, config.SAVEINTERVAL, WHITE, " seconds", NEWLINE,
 	WHITE, "Max Saves:        ", CYAN, config.SAVENUM, NEWLINE,
 )
 
 inputtyped("Is this config okay, type no to exit (Y/n)", inputtypedbool)
 
-running = True
-
 def autosave(*args):
 	global running
-	while running:
+	while True:
 		slept = 0
 		while slept < config.SAVEINTERVAL and running:
 			time.sleep(1)
 			slept += 1
+		if not running: break
 		save(False)
 
 threading.Thread(target = autosave).start()
