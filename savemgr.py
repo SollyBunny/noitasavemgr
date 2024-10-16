@@ -7,6 +7,7 @@ import datetime
 import shutil
 import sys
 import getpass
+import zipfile
 
 import config
 
@@ -132,6 +133,10 @@ def flattenlist(nestedlist):
 			flattened.append(item)
 	return flattened
 
+def zipfileread(zipfilepath, outpath):
+	with zipfile.ZipFile(zipfilepath, "r") as zipf:
+		zipf.extractall(outpath)
+
 # Main
 
 running = True
@@ -168,71 +173,125 @@ def save(log = False):
 	if lock: return
 	lock = True
 	try:
+		# delete old saves
 		deleteold(log)
+		# figure out path to save
 		start = time.time()
 		savedirname = datetime.datetime.fromtimestamp(round(start)).strftime("%%s_%a_%Y_%m_%d_%H_%M_%S") % round(start)
-		savedir = os.path.join(config.SAVEDIR, savedirname)
-		if os.path.exists(savedir):
-			return
+		if config.ZIP:
+			savedir = os.path.join(config.SAVEDIR, savedirname) + ".zip"
+			if os.path.exists(savedir):
+				return
+		else:
+			savedir = os.path.join(config.SAVEDIR, savedirname)
+			if os.path.exists(savedir):
+				return
+			os.makedirs(abspath(savedir))
 		if log: printc(WHITE, "Starting save at ", CYAN, abspath(savedir))
-		os.makedirs(abspath(savedir))
-		with open(abspath(os.path.join(savedir, "paths.txt")), "w") as file:
-			i = -1
-			for loaddirlist in config.LOADDIRS:
-				i += 1
-				if not isiterable(loaddirlist):
-					loaddirlist = [loaddirlist]
-				if len(loaddirlist) == 0:
-					continue
-				for loaddir in loaddirlist:
-					loaddirabs = abspath(loaddir)
-					if os.path.exists(loaddirabs):
-						break
-					loaddir = None
-				if not loaddir:
-					continue
-				savedirpartname = "%s_%s" % (i, os.path.basename(loaddir))
-				savedirpartpath = os.path.join(savedir, savedirpartname)
-				savedirpartabs = abspath(savedirpartpath)
-				if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, loaddir)
-				file.write("\n".join((savedirpartname, *loaddirlist)) + "\n\n")
-				if os.path.isdir(loaddirabs):
-					shutil.copytree(loaddirabs, savedirpartabs)
+		outpaths = ""
+		outfiles = []
+		i = -1
+		for loaddirlist in config.LOADDIRS:
+			i += 1
+			# find which loaddir in loaddirlist is valid
+			if not isiterable(loaddirlist):
+				loaddirlist = [loaddirlist]
+			if len(loaddirlist) == 0:
+				continue
+			for loaddir in loaddirlist:
+				loaddirabs = abspath(loaddir)
+				if os.path.exists(loaddirabs):
+					break
+				loaddir = None
+			if not loaddir:
+				continue
+			savedirpartname = "%s_%s" % (i, os.path.basename(loaddir))
+			# add to paths.txt
+			outpaths += "\n".join((savedirpartname, *loaddirlist)) + "\n\n"
+			# copy files
+			outfiles.append([savedirpartname, loaddirabs])
+		if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, "paths.txt")
+		# start writing
+		if config.ZIP:
+			with zipfile.ZipFile(savedir, "w", zipfile.ZIP_DEFLATED) as zipf:
+				zipf.writestr("paths.txt", outpaths)
+				for file in outfiles:
+					if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, file[0])
+					for root, dirs, files in os.walk(file[1]):
+						for f in files:
+							f = os.path.join(root, f)
+							o = os.path.join(file[0], os.path.relpath(
+								os.path.join(root, f), file[1]
+							))
+							zipf.write(f, o)
+		else:
+			with open(abspath(os.path.join(savedir, "paths.txt")), "w") as file:
+				file.write(outpaths)
+			for file in outfiles:
+				if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Saving: ", CYAN, file[0])
+				file[0] = abspath(os.path.join(savedir, file[0]))
+				if os.path.isdir(file[1]):
+					shutil.copytree(file[1], file[0])
 				else:
-					shutil.copy(loaddirabs, savedirpartabs)
+					shutil.copy(file[1], file[0])
 		if log: printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Finished")
 	finally:
 		lock = False
 
 def load(path):
-	start = time.time()
-	path = abspath(path)
-	printc(WHITE, "Starting load from ", CYAN, path)
-	with open(os.path.join(path, "paths.txt"), "r") as file:
-		files = [i.split("\n") for i in file.read().split("\n\n")]
-	printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Read ", CYAN, "paths.txt")
-	for file in files:
-		if len(file) < 2: continue
-		savedir = os.path.join(path, file[0])
-		for loaddir in file[1:]:
-			if len(loaddir) > 0:
-				loaddirabs = abspath(loaddir)
-				if os.path.exists(os.path.dirname(loaddirabs)):
-					break
-			loaddir = None
-		if loaddir == None: continue
-		printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Loading ", CYAN, loaddir)
-		if os.path.exists(loaddirabs):
-			if os.path.isdir(loaddirabs):
-				shutil.rmtree(loaddirabs)
+	global lock
+	if lock: return
+	lock = True
+	zipf = None
+	try:
+		start = time.time()
+		path = abspath(path)
+		printc(WHITE, "Starting load from ", CYAN, path)
+		if os.path.isdir(path):
+			with open(os.path.join(path, "paths.txt"), "r") as file:
+				files = [i.split("\n") for i in file.read().split("\n\n")]
+		else:
+			zipf = zipfile.ZipFile(path, "r")
+			files = [i.split("\n") for i in zipf.read("paths.txt").decode().split("\n\n")]
+		printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Read ", CYAN, "paths.txt")
+		for file in files:
+			if len(file) < 2: continue
+			savedir = os.path.join(path, file[0])
+			for loaddir in file[1:]:
+				if len(loaddir) > 0:
+					loaddirabs = abspath(loaddir)
+					if os.path.exists(os.path.dirname(loaddirabs)):
+						break
+				loaddir = None
+			if loaddir == None: continue
+			printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Loading ", CYAN, loaddir)
+			if os.path.exists(loaddirabs):
+				if os.path.isdir(loaddirabs):
+					shutil.rmtree(loaddirabs)
+				else:
+					os.remove(loaddirabs)
+			if os.path.isdir(path):
+				if os.path.exists(savedir):
+					if os.path.isdir(savedir):
+						shutil.copytree(savedir, loaddirabs)
+					else:
+						shutil.copy(savedir, loaddirabs)
 			else:
-				os.remove(loaddirabs)
-		if os.path.exists(savedir):
-			if os.path.isdir(savedir):
-				shutil.copytree(savedir, loaddirabs)
-			else:
-				shutil.copy(savedir, loaddirabs)
-	printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Finished")
+				for info in zipf.infolist():
+					if info.filename.startswith(file[0]):
+						o = os.path.join(loaddirabs, info.filename[info.filename.index("/") + 1:])
+						odir = os.path.dirname(o)
+						if not os.path.exists(odir):
+							os.makedirs(odir)
+						if info.is_dir():
+							continue
+						with open(o, "wb") as ofile:
+							ofile.write(zipf.read(info.filename))
+		printc(TAB, CYAN, floatformat(time.time() - start), WHITE, ": Finished")
+	finally:
+		lock = False
+		if zipf:
+			zipf.close()
 
 def promptsave(saev):
 	while True:
@@ -241,10 +300,11 @@ def promptsave(saev):
 			WHITE, "Pick an option, saves continue in the background every ", CYAN, config.SAVEINTERVAL, WHITE, " seconds", NEWLINE,
 			CYAN, "1", WHITE, ": Exit", NEWLINE,
 			CYAN, "2", WHITE, ": Delete", NEWLINE,
-			CYAN, "3", WHITE, ": (Re)Name", NEWLINE,
+			CYAN, "3", WHITE, ": ", "Rename" if saev.name else "Name", NEWLINE,
 			CYAN, "4", WHITE, ": Load", NEWLINE,
+			CYAN, "5", WHITE, ": ", "Unzip" if saev.zip else "Zip", NEWLINE,
 		)
-		i = inputtyped("Pick an option (1-4)", inputtypedint(1, 4))
+		i = inputtyped("Pick an option (1-5)", inputtypedint(1, 5))
 		if i == 1:
 			break
 		elif i == 2:
@@ -268,19 +328,51 @@ def promptsave(saev):
 			load(saev.dir)
 			input("Press enter to continue")
 			break
+		elif i == 5:
+			if saev.zip:
+				outdir = saev.dir
+				if "." in outdir:
+					outdir = outdir[:outdir.rindex(".")]
+				if os.path.exists(outdir):
+					printc(WHITE, "Folder already exists, press enter to continue")
+					input()
+					continue
+				os.makedirs(outdir)
+				with zipfile.ZipFile(saev.dir, "r") as zipf:
+					zipf.extractall(outdir)
+				os.remove(saev.dir)
+				saev.dir = outdir
+				saev.zip = False
+			else:
+				outdir = saev.dir
+				if os.path.exists(outdir + ".zip"):
+					printc(WHITE, "File already exists, press enter to continue")
+					input()
+					continue
+				shutil.make_archive(outdir, "zip", saev.dir)
+				shutil.rmtree(saev.dir)
+				saev.dir = outdir + ".zip"
+				saev.zip = True
+			break
 
 def promptsaves(namedonly):
 	saves = []
 	for save in os.listdir(abspath(config.SAVEDIR)):
 		savedir = os.path.join(abspath(config.SAVEDIR), save)
-		if not os.path.isdir(savedir): continue
 		count = save.count("_")
 		if count < 7: continue
 		if namedonly and count == 7: continue
+		if count > 7:
+			name = " ".join(save.split("_")[8:])
+			if "." in name:
+				name = name[:name.rindex(".")]
+		else:
+			name = None
 		save = Dict(
 			time = str2int(save[:save.index("_")]),
 			dir = savedir,
-			name = " ".join(save.split("_")[8:]) if count > 7 else None,
+			name = name,
+			zip = not os.path.isdir(savedir),
 		)
 		saves.append(save)
 	if len(saves) == 0:
@@ -296,7 +388,7 @@ def promptsaves(namedonly):
 		for save in saves[offset:]:
 			i += 1
 			printc(
-				CYAN, str(i).rjust(3), WHITE, ": ", CYAN, "%s " % save.name if save.name else "", WHITE, datetime.datetime.fromtimestamp(save.time).strftime("%A %Y/%m/%d %H:%M.%S"), " (", timeago(now - save.time), ")"
+				CYAN, str(i).rjust(3), WHITE, ": ", CYAN, "%s " % save.name if save.name else "", WHITE, datetime.datetime.fromtimestamp(save.time).strftime("%A %Y/%m/%d %H:%M.%S"), " (", timeago(now - save.time), ")", " (zipped)" if save.zip else "",
 			)
 
 		printc(
@@ -351,6 +443,7 @@ printc(
 	WHITE, "Load Directories: ", CYAN, "\n                  ".join(flattenlist(config.LOADDIRS)), NEWLINE, NEWLINE,
 	WHITE, "Save Interval:    ", CYAN, config.SAVEINTERVAL, WHITE, " seconds", NEWLINE,
 	WHITE, "Max Saves:        ", CYAN, config.SAVENUM, NEWLINE,
+	WHITE, "Save with zip:    ", CYAN, config.ZIP, NEWLINE,
 )
 
 inputtyped("Is this config okay, type no to exit (Y/n)", inputtypedbool)

@@ -1,6 +1,9 @@
 # Whether to use ANSII escapes for color and other stuff
 ANSII = True
 
+# Whether to ZIP files when saving, loading is unaffected
+ZIP = True
+
 # Where to store saves
 SAVEDIR = "./saves"
 
