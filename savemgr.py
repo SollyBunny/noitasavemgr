@@ -133,10 +133,6 @@ def flattenlist(nestedlist):
 			flattened.append(item)
 	return flattened
 
-def zipfileread(zipfilepath, outpath):
-	with zipfile.ZipFile(zipfilepath, "r") as zipf:
-		zipf.extractall(outpath)
-
 # Main
 
 running = True
